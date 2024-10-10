@@ -1,0 +1,236 @@
+-- Apartado (c)
+SELECT DISTINCT a.author_name
+FROM author a
+JOIN author_article aa ON a.author_id = aa.author_id
+JOIN article ar ON aa.DOI = ar.DOI
+JOIN author_affiliation af ON a.author_id = af.author_id
+JOIN affiliation afi ON af.affiliation_id = afi.affiliation_id
+WHERE afi.affiliation_name = 'Universidad Politécnica de Madrid'
+  AND YEAR(ar.publication_date) IN (2020, 2021)
+ORDER BY a.author_name;
+
+-- Apartado (d)
+SELECT DISTINCT a.author_name
+FROM author a
+JOIN author_article aa ON a.author_id = aa.author_id
+JOIN article ar ON aa.DOI = ar.DOI
+JOIN author_affiliation af ON a.author_id = af.author_id
+JOIN affiliation afi ON af.affiliation_id = afi.affiliation_id
+WHERE afi.affiliation_name = 'Universidad Politécnica de Madrid'
+  AND YEAR(ar.publication_date) = 2020
+  AND a.author_id IN (
+    SELECT a2.author_id
+    FROM author a2
+    JOIN author_article aa2 ON a2.author_id = aa2.author_id
+    JOIN article ar2 ON aa2.DOI = ar2.DOI
+    WHERE YEAR(ar2.publication_date) = 2021
+  )
+ORDER BY a.author_name;
+
+-- Apartado (e)
+SELECT author.author_name, affiliation.affiliation_name
+FROM author
+JOIN author_affiliation ON author.author_id = author_affiliation.author_id
+JOIN affiliation ON author_affiliation.affiliation_id = affiliation.affiliation_id
+WHERE affiliation.country_name = 'Spain'
+AND author.author_id NOT IN (
+    SELECT DISTINCT author_article.author_id
+    FROM author_article
+    JOIN article ON author_article.DOI = article.DOI
+    WHERE YEAR(article.publication_date) IN (2020, 2021)
+)
+ORDER BY affiliation.affiliation_name, author.author_name;
+
+-- Apartado (f)
+SELECT bd2324.journal.journal_name, bd2324.journal.issn, SUM(bd2324.article.num_citations) AS total_citations
+FROM bd2324.article
+JOIN bd2324.journal ON bd2324.article.journal_id = bd2324.journal.journal_id
+WHERE bd2324.journal.JIF_Quartile = 'Q1'
+GROUP BY bd2324.journal.journal_id, bd2324.journal.journal_name, bd2324.journal.issn;
+
+-- Apartado (g)
+SELECT bd2324.journal.journal_name, SUM(bd2324.article.num_citations) AS total_citations
+FROM bd2324.article
+JOIN bd2324.journal ON bd2324.article.journal_id = bd2324.journal.journal_id
+WHERE bd2324.journal.JIF_Quartile = 'Q1'
+GROUP BY bd2324.journal.journal_id, bd2324.journal.journal_name
+ORDER BY total_citations DESC;
+
+-- Apartado (h)
+SELECT DISTINCT af.affiliation_name
+FROM affiliation af
+INNER JOIN (
+    SELECT af.affiliation_id, COUNT(DISTINCT aa.author_id) AS distinct_authors
+    FROM (
+        SELECT a.title, a.publication_date, a.DOI, aa.author_id
+        FROM article a
+        INNER JOIN author_article aa ON a.DOI = aa.DOI
+        WHERE YEAR(a.publication_date) = (
+            SELECT MAX(YEAR(publication_date))
+            FROM article
+        )
+    ) aa
+    INNER JOIN author_affiliation af ON aa.author_id = af.author_id
+    GROUP BY af.affiliation_id
+    HAVING COUNT(DISTINCT aa.DOI) >= 5
+) author_affiliation_3 ON af.affiliation_id = author_affiliation_3.affiliation_id
+WHERE author_affiliation_3.distinct_authors >= 10;
+
+-- Apartado (i)
+select journal.journal_name
+from journal
+where JIF > (select avg(journal.JIF) from journal)
+and journal.journal_id IN (select article.journal_id from article
+						Where YEAR(article.publication_DATE) = (select MIN(YEAR(article.publication_DATE)) from article)
+						GROUP BY article.journal_id
+						HAVING COUNT(*) > 300)
+
+-- Apartado (j)
+SELECT j.journal_name
+FROM journal j
+JOIN (
+    SELECT a.journal_id, SUM(a.num_citations) AS total_citations
+    FROM article a
+    GROUP BY a.journal_id
+) AS article_citations ON j.journal_id = article_citations.journal_id
+WHERE article_citations.total_citations > (
+    SELECT AVG(total_citations) 
+    FROM (
+        SELECT SUM(a.num_citations) AS total_citations
+        FROM article a
+        GROUP BY a.journal_id
+    ) as average_citations
+)
+
+-- Apartado (k)
+select author.author_name from author 
+inner join author_article on author.author_id = author_article.author_id
+inner join article on article.DOI = author_article.DOI
+group by author.author_name having count(distinct year(article.publication_date)) = 
+(select count(distinct year(publication_date)) from article);
+
+-- apartado(l)
+DELIMITER //
+
+CREATE PROCEDURE GetMostAuthorsByJournal(
+    IN p_year INT,
+    OUT p_journal_name VARCHAR(255),
+    OUT p_author_count INT
+)
+BEGIN
+    DECLARE done INT DEFAULT FALSE;
+    DECLARE current_journal_name VARCHAR(255);
+    DECLARE current_author_count INT;
+
+    -- Cursor para obtener nombres de revistas y contar autores
+    DECLARE journal_cursor CURSOR FOR
+        SELECT j.journal_name, COUNT(DISTINCT aa.author_id) AS author_count
+        FROM journal j
+        JOIN article a ON j.journal_id = a.journal_id
+        JOIN author_article aa ON a.DOI = aa.DOI
+        WHERE YEAR(a.publication_date) = p_year
+        GROUP BY j.journal_name;
+
+    -- Manejo de excepciones
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+
+    -- Inicialización
+    SET p_journal_name = '';
+    SET p_author_count = 0;
+
+    -- Abrir el cursor
+    OPEN journal_cursor;
+
+    read_loop: LOOP
+        -- Leer el siguiente registro del cursor
+        FETCH journal_cursor INTO current_journal_name, current_author_count;
+
+        -- Salir si no hay más registros
+        IF done THEN
+            LEAVE read_loop;
+        END IF;
+
+        -- Verificar si es un nuevo máximo
+        IF current_author_count > p_author_count THEN
+            SET p_author_count = current_author_count;
+            SET p_journal_name = current_journal_name;
+        ELSEIF current_author_count = p_author_count THEN
+            -- Empate, concatenar nombres de revistas
+            SET p_journal_name = CONCAT(p_journal_name, ',', current_journal_name);
+        END IF;
+    END LOOP;
+
+    -- Cerrar el cursor
+    CLOSE journal_cursor;
+END //
+
+DELIMITER ;
+
+-- Apartado (m)
+DELIMITER //
+
+CREATE FUNCTION calcularPromedioArticulosPorAno(journal_id_param bigint)
+RETURNS FLOAT
+DETERMINISTIC
+BEGIN
+  DECLARE total_articulos INT;
+  DECLARE total_anos INT;
+  DECLARE promedio FLOAT;
+
+  SELECT COUNT(*) INTO total_articulos
+  FROM article
+  WHERE journal_id = journal_id_param;
+
+  SELECT COUNT(DISTINCT YEAR(publication_date)) INTO total_anos
+  FROM article
+  WHERE journal_id = journal_id_param;
+
+  IF total_anos > 0 THEN
+    SET promedio = total_articulos / total_anos;
+  ELSE
+    SET promedio = 0;
+  END IF;
+
+  RETURN promedio;
+END //
+
+DELIMITER ;
+
+SELECT calcularPromedioArticulosPorAno(12125) AS promedio_articulos_por_ano;
+
+-- Apartado (n)
+CREATE TABLE `revision` (
+  `revision_id` bigint NOT NULL AUTO_INCREMENT,
+  `DOI` varchar(200) NOT NULL,
+  `revisor_id` bigint NOT NULL,
+  `revision_date` date DEFAULT NULL,
+  PRIMARY KEY (`revision_id`),
+  UNIQUE KEY `unique_revision` (`DOI`, `revisor_id`),
+  CONSTRAINT `fk_REVISION_ARTICLE` FOREIGN KEY (`DOI`) REFERENCES `article` (`DOI`),
+  CONSTRAINT `fk_REVISION_REVIEWER` FOREIGN KEY (`revisor_id`) REFERENCES `author` (`author_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+
+DELIMITER //
+
+CREATE TRIGGER before_insert_revision
+BEFORE INSERT ON revision
+FOR EACH ROW
+BEGIN
+  DECLARE is_author BOOLEAN;
+
+  -- Verificar si el revisor es también un autor del artículo
+  SELECT COUNT(*)
+  INTO is_author
+  FROM author_article
+  WHERE DOI = NEW.DOI AND author_id = NEW.revisor_id;
+
+  IF is_author THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'No se permite asignar a un revisor que también es autor del artículo';
+  END IF;
+END //
+
+DELIMITER ;
+
+INSERT INTO revision (DOI, revisor_id, revision_date) VALUES ('10.1007/s11047-016-9591-0', 6503848058, '2023-12-19');
